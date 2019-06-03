@@ -1,0 +1,292 @@
+---
+title: "Machine learning final assignment: Barbel lift, how well do they do it?"
+output: 
+  html_document:
+    keep_md: yes
+---
+
+
+
+## Model explanation
+
+With this assignment the goal is to predict classification of barbell
+lifts into A,B,C,D,E. We start with exploring the data. We realize
+that there are many NA's so we start cleaning the data by removing
+high NA columns. We perform both Hold-out test as well as cross
+validation based on this [stack answer](https://stats.stackexchange.com/questions/104713/hold-out-validation-vs-cross-validation) as we have 19 thousand Data
+points! CV is used typically if the dataset is small. Both are used to
+understand the Model Accuracy.
+
+The initial plan is to start with decision trees and go from there on
+if the accuracy is not good enough. As explained below we need a model
+accuracy of 99% as I would like atleast a 90% accuracy on the
+QUIZ/TEST!
+
+
+### Expected out of sample error calculation!
+
+Based on [this](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-requiredModelAccuracy.md), we are able to calculate the following:
+
+The following table illustrates the probability of predicting all 20
+test cases right, given a particular model accuracy.
+
+
+<table>
+<tr><th><br><br>Model<br>Accuracy</th><th>Probability<br>of Predicting <br>20 out of 20<br>Correctly</th>
+</tr>
+<tr><td align=right>0.800</td><td align=right>0.0115</td></tr>
+<tr><td align=right>0.850</td><td align=right>0.0388</td></tr>
+<tr><td align=right>0.900</td><td align=right>0.1216</td></tr>
+<tr><td align=right>0.950</td><td align=right>0.3585</td></tr>
+<tr><td align=right>0.990</td><td align=right>0.8179</td></tr>
+<tr><td align=right>0.995</td><td align=right>0.9046</td></tr>
+</table>
+
+We thus aim for a model accuracy of 99.5% atleast so that the expected
+out of sample accuracy will be in the order of 90%.
+
+---
+## Start of R programming!
+
+
+```r
+library(caret,corrplot)
+```
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+```r
+f.training <- read.csv("./pml-training.csv")
+f.testing <- read.csv("./pml-testing.csv")
+```
+
+## Explore Data
+
+
+```r
+dim(f.training)
+```
+
+```
+## [1] 19622   160
+```
+
+```r
+sum(is.na(f.training))
+```
+
+```
+## [1] 1287472
+```
+Other explorations were done with `head`, `names` etc... but is not
+showed here due to the large output. With the `sum` function we see
+that there are a lot of NA's, so we get into cleaning the data.
+
+## Cleaning DATA
+
+
+```r
+## Cleaning Removing high NA cols
+
+ncol(f.training)
+```
+
+```
+## [1] 160
+```
+
+```r
+nas <- lapply(f.training,function(X) sum(is.na(X)))> 0.90*nrow(f.training)
+f.training <- f.training[,!nas]
+f.testing <- f.testing[,!nas]
+ncol(f.training)
+```
+
+```
+## [1] 93
+```
+
+```r
+## Cleaning Removing Zero Var Cols
+
+NZV <- nearZeroVar(f.training)
+f.training <- f.training[,-NZV]
+f.testing <- f.testing[,-NZV]
+ncol(f.training)
+```
+
+```
+## [1] 59
+```
+
+```r
+## cleaning removing meaningless variables such as name
+
+MLV <- 1:5
+f.training <- f.training[,-MLV]
+f.testing <- f.testing[,-MLV]
+ncol(f.training)
+```
+
+```
+## [1] 54
+```
+
+## Partition the data
+
+
+```r
+inTrain <- createDataPartition(y=f.training$classe,p=0.7,list=F)
+training <- f.training[inTrain,]
+testing <- f.training[-inTrain,]
+```
+
+
+## Model fit Decision tree!
+
+We start with the Decision Tree as here we are primary interested in a
+classification type of problem. Based on [this](https://stats.stackexchange.com/questions/61783/bias-and-variance-in-leave-one-out-vs-k-fold-cross-validation) we choose a CV
+K-fold of 10.
+
+
+```r
+trControl <- trainControl(method="cv",number=10)
+modFitDT <- train(classe~.,method="rpart",data=training,trControl=trControl)
+
+predictionDT <- predict(modFitDT,testing)
+confusionMatrix(predictionDT,testing$classe)$overall['Accuracy']
+```
+
+```
+##  Accuracy 
+## 0.5690739
+```
+The accuracy of the decision tree seems to be really bad. Increasing
+the CV number doesn't seem to help! The decision tree is shown below:
+
+
+```r
+library(rattle)
+fancyRpartPlot(modFitDT$finalModel)
+```
+
+![](test[exported]_files/figure-html/DTplot-1.png)<!-- -->
+
+```r
+plot(confusionMatrix(predictionDT,testing$classe)$table)
+```
+
+![](test[exported]_files/figure-html/DTplot-2.png)<!-- -->
+
+
+## Model Fit Random Forests
+
+Next we try Random Forests. This following code uses 3 cores, and
+allows running in parallel for a time of 5 mins instead of 20 mins, on
+an 8gb ram system. The code is based off of : [Github link of Len](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md).
+
+
+```r
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+trControl <- trainControl(method = "cv",
+                           number = 5,
+                          allowParallel = TRUE)
+
+modFitRF <- train(classe~.,data=training,method="rf", trControl=trControl)
+
+stopCluster(cluster)
+registerDoSEQ()
+
+predictionRF <- predict(modFitRF,testing)
+confusionMatrix(predictionRF,testing$classe)$overall['Accuracy']
+```
+
+```
+##  Accuracy 
+## 0.9979609
+```
+
+
+```r
+plot(confusionMatrix(predictionRF,testing$classe)$table)
+```
+
+![](test[exported]_files/figure-html/unnamed-chunk-5-1.png)<!-- -->
+
+## Final Prediction
+
+```r
+prediction.finale <- predict(modFitRF,f.testing)
+prediction.finale
+```
+
+```
+##  [1] B A B A A E D B A A B C B A E E A B B B
+## Levels: A B C D E
+```
+This led to a 100% prediction on the Quiz! :)
+
+## Appendix: Question copied from Coursera!
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now
+possible to collect a large amount of data about personal activity
+relatively inexpensively. These type of devices are part of the
+quantified self movement – a group of enthusiasts who take
+measurements about themselves regularly to improve their health, to
+find patterns in their behavior, or because they are tech geeks. One
+thing that people regularly do is quantify how much of a particular
+activity they do, but they rarely quantify how well they do it. In
+this project, your goal will be to use data from accelerometers on the
+belt, forearm, arm, and dumbell of 6 participants. They were asked to
+perform barbell lifts correctly and incorrectly in 5 different
+ways. More information is available from the website here:
+http://web.archive.org/w
+eb/20161224072740/http:/groupware.les.inf.puc-rio.br/har
+(see the section on the Weight Lifting Exercise Dataset).
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source:
+http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. If
+you use the document you create for this class for any purpose please
+cite them as they have been very generous in allowing their data to be
+used for this kind of assignment.
+
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+> The data for this project come from this source:
+> http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. If
+> you use the document you create for this class for any purpose
+> please cite them as they have been very generous in allowing their
+> data to be used for this kind of assignment. - from [website](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har#weight_lifting_exercises)
+
+> Six young health participants were asked to perform one set of 10
+> repetitions of the Unilateral Dumbbell Biceps Curl in five different
+> fashions: exactly according to the specification (Class A), throwing
+> the elbows to the front (Class B), lifting the dumbbell only halfway
+> (Class C), lowering the dumbbell only halfway (Class D) and throwing
+> the hips to the front (Class E). - from [website](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har#weight_lifting_exercises)
